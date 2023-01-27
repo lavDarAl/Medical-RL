@@ -1,0 +1,75 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: medical-train
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: medical-train
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: gpu
+                    operator: In
+                    values:
+                      - p100
+      initContainers:
+        - name: medical
+          image: registry.datexis.com/bwinter/medicalrl:latest
+          command: ["sh", "-c", "mkdir -p /pvc/train-storage/medical"]
+        - name: copy-medical-gym
+          image: registry.datexis.com/bwinter/medicalrl:latest
+          command: ["sh", "-c", "git clone https://github.com/DATEXIS/Medical-Gym.git /pvc/train-storage/medical && git clone https://github.com/DATEXIS/Medical-RL.git /pvc/train-storage/medical"]
+          volumeMounts:
+            - name: train-storage
+              mountPath: /pvc/train-storage
+      containers:
+        - args:
+            - pip install -e /pvc/train-storage/medical/Medical-Gym && cd /pvc/train-storage/medical/Medical-RL && python main.py
+              --batch_size 256 --num_cpu 128 --inference_batch_size 4
+              --rollout_fragment_length 32 --num_gpu 1 --learning_rate 3e-05
+              --num_gpu_per_worker 0.25 --num_workers 4 --max_episodes 5000000
+              --max_diseases 256 --sequence_length 128 --replay_proportion 0.1
+              --log_dir /pvc/train-storage/medical_rl
+              --log_level WARN --model_name_or_path prajjwal1/bert-mini
+          command:
+            - /bin/sh
+            - -c
+          env:
+            - name: TUNE_MAX_PENDING_TRIALS_PG
+              value: "5"
+          image: registry.datexis.com/bwinter/medicalrl:latest
+          name: medical-train
+          ports:
+            - containerPort: 22
+          resources:
+            limits:
+              memory: 64000Mi
+              nvidia.com/gpu: "2.0"
+            requests:
+              memory: 32000Mi
+              nvidia.com/gpu: "2.0"
+          volumeMounts:
+            - mountPath: /pvc/train-storage
+              name: train-storage
+            - mountPath: /dev/shm
+              name: dshm
+          workingDir: /pvc/train-storage/medical_rl
+      imagePullSecrets:
+        - name: private-registry-auth
+      restartPolicy: Never
+      volumes:
+        - name: train-storage
+          persistentVolumeClaim:
+            claimName: train-storage
+        - emptyDir:
+            medium: Memory
+          name: dshm
+
+
+

@@ -1,0 +1,63 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: medical-rl-train
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: medical-rl-train
+    spec:
+      containers:
+        - name: medical-rl-train
+          image: registry.datexis.com/bwinter/medicalrl:latest
+          imagePullPolicy: Always
+          workingDir: /pvc/laliko-storage/medical_rl
+          env:
+            - name: TUNE_MAX_PENDING_TRIALS_PG
+              value: "5"
+          command: ["/bin/sh", "-c"]
+          args:
+            - pip install -e ./Medical-Gym &&
+              cd Medical-RL &&
+              python main.py
+              --model_name_or_path prajjwal1/bert-small
+              --sequence_length 128
+              --batch_size 512
+              --inference_batch_size 48
+              --num_gpu 2
+              --num_gpu_per_worker 1
+              --num_workers 4
+              --rollout_fragment_length 256
+              --replay_proportion 0.1
+              --log_dir /pvc/laliko-storage/logs/medical_rl
+              --log_level WARN
+              --max_episodes 10000000
+          volumeMounts:
+            - mountPath: /pvc/laliko-storage
+              name: laliko-storage
+            - mountPath: /dev/shm
+              name: dshm
+          ports:
+            - containerPort: 22
+          resources:
+            requests:
+              nvidia.com/gpu: 2
+              memory: 32000Mi
+            limits:
+              nvidia.com/gpu: 2
+              memory: 64000Mi
+      nodeSelector:
+        gpu: a100
+      restartPolicy: "Never"
+      imagePullSecrets:
+        - name: private-registry-auth
+      volumes:
+        - name: ssh-key
+        - name: laliko-storage
+          persistentVolumeClaim:
+            claimName: laliko-storage
+        - name: dshm
+          emptyDir:
+            medium: Memory

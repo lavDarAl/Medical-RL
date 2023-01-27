@@ -1,0 +1,58 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: medical-train
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: medical-train
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: gpu
+                    operator: In
+                    values:
+                      - p100
+      containers:
+        - name: medical-train
+          image: registry.datexis.com/bwinter/medicalrl:latest
+          command: ["sh","-c"]
+          args: ["eval $(ssh-agent -s) && ssh-add <(echo ${SSH_PRIVATE_KEY}) && git clone git@github.com:lavDarAl/DATEXIS/Medical-Gym.git /app/Medical-Gym && pip install -e /app/Medical-Gym && cd Medical-RL && python main.py --batch_size 256 --num_cpu 128 --inference_batch_size 4 --rollout_fragment_length 32 --num_gpu 1 --learning_rate 3e-05 --num_gpu_per_worker 0.25 --num_workers 4 --max_episodes 5000000 --max_diseases 256 --sequence_length 128 --replay_proportion 0.1 --log_dir /pvc/laliko-storage/medical_rl --log_level WARN --model_name_or_path prajjwal1/bert-mini"]
+          env:
+            - name: SSH_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: git-secret
+                  key: ssh-privatekey
+          ports:
+            - containerPort: 22
+          resources:
+            limits:
+              memory: 64000Mi
+              nvidia.com/gpu: "2.0"
+            requests:
+              memory: 32000Mi
+              nvidia.com/gpu: "2.0"
+          volumeMounts:
+            - mountPath: /pvc/laliko-storage
+              name: laliko-storage
+            - mountPath: /dev/shm
+              name: dshm
+      imagePullSecrets:
+        - name: private-registry-auth
+      restartPolicy: Never
+      volumes:
+        - name: laliko-storage
+          persistentVolumeClaim:
+            claimName: laliko-storage
+        - emptyDir:
+            medium: Memory
+          name: dshm
+
+           
+
